@@ -1,0 +1,15 @@
+{
+  "name": "deps-tracker",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "scan": "node -e \"require('dotenv').config(); const {scanAll}=require('./scanner'); const imgs=[process.env.FRONTEND_IMAGE,process.env.STRAPI_IMAGE].filter(Boolean); console.log(JSON.stringify(scanAll(imgs),null,2));\""
+  },
+  "description": "Daily vulnerability scanner for tyls production images",
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "node-cron": "^4.2.1"
+  }
+}
