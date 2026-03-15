@@ -1,4 +1,5 @@
-const BASE = "";
+// Strip credentials from the URL to avoid "Request cannot be constructed from a URL that includes credentials" errors
+const BASE = `${window.location.protocol}//${window.location.host}`;
 
 function authHeaders() {
   const token = localStorage.getItem("token");
