@@ -16,8 +16,12 @@ if (missing.length > 0) {
 }
 
 const crypto = require("crypto");
+const fs = require("fs");
 const express = require("express");
 const path = require("path");
+
+const DATA_DIR = path.join(__dirname, "data");
+const NOTIFIED_VULNS_PATH = path.join(DATA_DIR, "notified-criticals.json");
 const cron = require("node-cron");
 const {
   scanAll,
@@ -123,17 +127,96 @@ async function notifyWeeklySummary() {
   }
 }
 
-// Send Discord alert if any image has critical vulnerabilities
+// --- Notified vulnerabilities deduplication ---
+// Stores { vulnIds: ["CVE-xxxx", ...] } so we only ping for NEW criticals.
+
+function loadNotifiedVulns() {
+  try {
+    if (fs.existsSync(NOTIFIED_VULNS_PATH)) {
+      return JSON.parse(fs.readFileSync(NOTIFIED_VULNS_PATH, "utf-8"));
+    }
+  } catch (err) {
+    console.error(`[dedup] Failed to load notified vulns: ${err.message}`);
+  }
+  return { vulnIds: [] };
+}
+
+function saveNotifiedVulns(data) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(NOTIFIED_VULNS_PATH, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error(`[dedup] Failed to save notified vulns: ${err.message}`);
+  }
+}
+
+/**
+ * Extract all critical vulnerability IDs from scan results.
+ * Returns a Map of vulnId -> { image, title }
+ */
+function extractCriticalVulnIds(results) {
+  const vulns = new Map();
+  for (const r of results) {
+    const trivyData = r.raw || r.trivy || {};
+    const targets = trivyData.Results || [];
+    for (const target of targets) {
+      for (const vuln of target.Vulnerabilities || []) {
+        if (vuln.Severity === "CRITICAL") {
+          vulns.set(vuln.VulnerabilityID, {
+            image: r.image,
+            title: vuln.Title || vuln.VulnerabilityID,
+          });
+        }
+      }
+    }
+  }
+  return vulns;
+}
+
+// Send Discord alert only for NEW critical vulnerabilities
 async function notifyCriticals(results) {
   if (!DISCORD_WEBHOOK) return;
 
-  const criticals = results.filter((r) => r.summary?.CRITICAL > 0);
-  if (criticals.length === 0) return;
+  const currentVulns = extractCriticalVulnIds(results);
+  if (currentVulns.size === 0) {
+    // No criticals at all — clear the stored list
+    saveNotifiedVulns({ vulnIds: [] });
+    return;
+  }
 
-  const lines = criticals.map(
-    (r) =>
-      `**${r.image}** — ${r.summary.CRITICAL} Critical, ${r.summary.HIGH} High, ${r.summary.MEDIUM} Medium`
-  );
+  const stored = loadNotifiedVulns();
+  const alreadyNotified = new Set(stored.vulnIds);
+  const newVulns = new Map();
+
+  for (const [id, info] of currentVulns) {
+    if (!alreadyNotified.has(id)) {
+      newVulns.set(id, info);
+    }
+  }
+
+  // Save the current full set so tomorrow we compare against today's state
+  saveNotifiedVulns({ vulnIds: [...currentVulns.keys()] });
+
+  if (newVulns.size === 0) {
+    console.log(`[discord] ${currentVulns.size} criticals found but all already notified — skipping`);
+    return;
+  }
+
+  console.log(`[discord] ${newVulns.size} new critical(s) out of ${currentVulns.size} total`);
+
+  // Group new vulns by image for the message
+  const byImage = new Map();
+  for (const [id, info] of newVulns) {
+    if (!byImage.has(info.image)) byImage.set(info.image, []);
+    byImage.get(info.image).push(id);
+  }
+
+  const lines = [];
+  for (const [image, ids] of byImage) {
+    lines.push(`**${image}** — ${ids.length} new critical(s):\n${ids.map((id) => `  \`${id}\``).join("\n")}`);
+  }
 
   const mention = process.env.DISCORD_MENTION
     ? `<@${process.env.DISCORD_MENTION}>`
@@ -143,10 +226,11 @@ async function notifyCriticals(results) {
     content: mention,
     embeds: [
       {
-        title: "\u26a0\ufe0f Critical Vulnerabilities Detected",
-        description: lines.join("\n"),
+        title: "\u26a0\ufe0f New Critical Vulnerabilities Detected",
+        description: lines.join("\n\n"),
         color: 0xff0000,
         timestamp: new Date().toISOString(),
+        footer: { text: `${currentVulns.size} total criticals (${currentVulns.size - newVulns.size} already known)` },
       },
     ],
   };

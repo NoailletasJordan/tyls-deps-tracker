@@ -25,8 +25,8 @@ COPY server.js scanner.js ./
 # Copy built React app from stage 1
 COPY --from=client-build /app/public ./public
 
-# Create results directory
-RUN mkdir -p /app/results
+# Create results and data directories
+RUN mkdir -p /app/results /app/data
 
 EXPOSE 4000
 
