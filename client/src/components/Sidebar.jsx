@@ -98,7 +98,8 @@ export default function Sidebar({ activeView, onNavigate, refreshKey }) {
                   No scans yet
                 </div>
               ) : (
-                history.slice(0, 10).map((scan) => {
+                <div style={{ maxHeight: "240px", overflowY: "auto" }}>
+                {history.slice(0, 50).map((scan) => {
                   const s = scan.summary || {};
                   return (
                     <button
@@ -116,7 +117,8 @@ export default function Sidebar({ activeView, onNavigate, refreshKey }) {
                       </span>
                     </button>
                   );
-                })
+                })}
+                </div>
               )}
             </div>
           ))
